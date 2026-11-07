@@ -71,6 +71,11 @@ elif [[ $androidVER == "16" ]];then
     cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/A16/* $work_dir/build/baserom/images/product/priv-app/
     cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/overlay/* $work_dir/build/baserom/images/product/overlay/
     cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/permissions/* $work_dir/build/baserom/images/product/etc/permissions/
+elif [[ $androidVER == "17" ]];then
+    mods "Copying MIUI Dialer for Android 17 (using A16 files)..."
+    cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/A16/* $work_dir/build/baserom/images/product/priv-app/
+    cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/overlay/* $work_dir/build/baserom/images/product/overlay/
+    cp -rf $work_dir/bin/modfile/UpdateFile/Global_MultiverConvert2MiDialer/permissions/* $work_dir/build/baserom/images/product/etc/permissions/
 else
     mods "Unsupported Android version: $androidVER"
 fi
