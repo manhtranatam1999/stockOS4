@@ -1,0 +1,111 @@
+name: Extract GMS from Global ROM
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: "Link ROM Global (.zip chứa payload.bin)"
+        required: true
+        default: "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS4.0.1.0.XPCMIXM/pudding_global-ota_full-OS4.0.1.0.XPCMIXM-user-17.0-e181e77a99.zip"
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 erofs-utils aapt unzip p7zip-full jq
+
+      - name: Download ROM
+        run: |
+          mkdir -p work && cd work
+          aria2c -q --file-allocation=none -s10 -x10 -o rom.zip "${{ inputs.rom_url }}"
+          ls -lh rom.zip
+
+      - name: Extract payload.bin
+        run: |
+          cd work
+          unzip -o rom.zip payload.bin
+          rm -f rom.zip
+          ls -lh payload.bin
+
+      - name: Get payload-dumper-go
+        run: |
+          cd work
+          URL=$(curl -s https://api.github.com/repos/ssut/payload-dumper-go/releases/latest \
+            | jq -r '.assets[] | select(.name | test("linux_amd64")) | .browser_download_url' | head -n1)
+          echo "Dumper: $URL"
+          aria2c -q -o pdg.tar.gz "$URL"
+          mkdir -p pdg && tar -xzf pdg.tar.gz -C pdg
+          find pdg -type f -name "payload-dumper-go" -exec cp {} ./payload-dumper-go \;
+          chmod +x payload-dumper-go
+
+      - name: Dump product and system_ext
+        run: |
+          cd work
+          ./payload-dumper-go -p product,system_ext -o out payload.bin
+          rm -f payload.bin
+          ls -lh out
+          file out/*.img
+
+      - name: Unpack images
+        run: |
+          cd work
+          mkdir -p product system_ext
+          for p in product system_ext; do
+            if fsck.erofs --extract="$PWD/$p" "out/$p.img"; then
+              echo "$p: erofs OK"
+            else
+              echo "$p: erofs failed, thu 7z"
+              7z x -y -o"$p" "out/$p.img" > /dev/null
+            fi
+          done
+          rm -rf out
+
+      - name: Probe GMS (xem log o day)
+        run: |
+          cd work
+          {
+            echo "=== FIND ==="
+            find product system_ext -iname "*gmssystem*" -o -iname "GmsCore*" -o -iname "PrebuiltGms*" \
+              -o -iname "GoogleServicesFramework*" -o -iname "Phonesky*" -o -iname "*.apex" -o -iname "*.capex"
+            echo
+            for f in $(find product system_ext -name "GoogleServicesFramework.apk" -o -name "Phonesky.apk" -o -iname "PrebuiltGmsCore*.apk" -o -iname "GmsCore*.apk"); do
+              echo "=== BADGING: $f ==="
+              aapt dump badging "$f" 2>/dev/null | grep -E "^package|sharedUserId" || true
+              echo "--- providers com.google.settings ---"
+              aapt dump xmltree "$f" AndroidManifest.xml 2>/dev/null | grep -n "com.google.settings" || echo "(khong co)"
+              echo
+            done
+          } | tee probe.txt
+
+      - name: Collect GMS files
+        run: |
+          cd work
+          mkdir -p collected/product collected/system_ext
+          for d in $(find product -type d \( -name "GoogleServicesFramework" -o -name "Phonesky" -o -name "GmsCore*" -o -name "PrebuiltGms*" \)); do
+            mkdir -p "collected/$(dirname "$d")" && cp -r "$d" "collected/$(dirname "$d")/"
+          done
+          for d in $(find system_ext -type d \( -name "GoogleServicesFramework" -o -name "Phonesky" -o -name "GmsCore*" -o -name "PrebuiltGms*" \)); do
+            mkdir -p "collected/$(dirname "$d")" && cp -r "$d" "collected/$(dirname "$d")/"
+          done
+          # etc/permissions lien quan GSF/GMS
+          for f in $(find product system_ext -path "*etc/permissions*" \( -name "*gsf*" -o -name "*google.android.gms*" -o -name "*android.vending*" \)); do
+            mkdir -p "collected/$(dirname "$f")" && cp "$f" "collected/$(dirname "$f")/"
+          done
+          cp probe.txt collected/
+          du -sh collected
+          find collected -type f | head -50
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gms-from-global-os4
+          path: work/collected
+          retention-days: 7
